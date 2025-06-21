@@ -88,6 +88,7 @@ function App() {
   const [mapSelectionStep, setMapSelectionStep] = useState<'start' | 'end'>('start');
   const [userMessage, setUserMessage] = useState('');
   const [isUserInputActive, setIsUserInputActive] = useState(false);
+  const isUserInputActiveRef = useRef<boolean>(false);
   const userInputTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const walkingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const coordinateIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -98,6 +99,8 @@ function App() {
   const totalDistanceTraveledRef = useRef<number>(0);
   const currentPaceRef = useRef<number>(20);
   const [nextAiCallTime, setNextAiCallTime] = useState<number>(0);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Update ref when state changes
   useEffect(() => {
@@ -109,6 +112,11 @@ function App() {
     currentPaceRef.current = walkingPace;
     console.log(`Walking pace updated to: ${walkingPace} km/h`);
   }, [walkingPace]);
+
+  useEffect(() => {
+    isUserInputActiveRef.current = isUserInputActive;
+    console.log(`User input mode active: ${isUserInputActive}`);
+  }, [isUserInputActive]);
 
   // Extract coordinates from URL
   const extractCoordinatesFromUrl = async (url: string): Promise<Coordinate[]> => {
@@ -560,7 +568,7 @@ function App() {
   // Check if we should send AI request (every 20 seconds)
   const checkAndSendAiRequest = (currentCoord?: Coordinate, currentIndex?: number) => {
     // Don't send coordinate updates if user input mode is active
-    if (isUserInputActive) {
+    if (isUserInputActiveRef.current) {
       console.log('Skipping coordinate AI request - user input mode is active');
       return;
     }
@@ -734,8 +742,33 @@ function App() {
         clearTimeout(userInputTimeoutRef.current);
         userInputTimeoutRef.current = null;
       }
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+      }
     };
   }, []);
+
+  // Countdown logic
+  const startCountdown = () => {
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+    }
+    setCountdown(30);
+    countdownIntervalRef.current = setInterval(() => {
+      setCountdown(prev => {
+        if (prev === null || prev <= 1) {
+          clearInterval(countdownIntervalRef.current!);
+          countdownIntervalRef.current = null;
+          setIsUserInputActive(false);
+          isUserInputActiveRef.current = false; // Set ref immediately
+          console.log('Countdown finished, resuming coordinate sending.');
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
 
   // Handle map click for point selection
   const handleMapClick = (event: L.LeafletMouseEvent) => {
@@ -799,12 +832,14 @@ function App() {
 
     // Activate user input mode and pause coordinate sending
     setIsUserInputActive(true);
+    isUserInputActiveRef.current = true; // Set ref immediately
     console.log('User input mode activated, pausing coordinate sending');
 
     // Clear any existing timeout
     if (userInputTimeoutRef.current) {
       clearTimeout(userInputTimeoutRef.current);
     }
+    setCountdown(null);
 
     // Immediately show user's message in conversation area
     const userInputResponse: AIResponse = {
@@ -831,12 +866,6 @@ function App() {
 
     // Send user message to AI
     await sendUserMessageToAI(messageToSend);
-    
-    // Set 30-second timeout to resume coordinate sending
-    userInputTimeoutRef.current = setTimeout(() => {
-      setIsUserInputActive(false);
-      console.log('User input timeout expired, resuming coordinate sending');
-    }, 30000);
   };
 
   // Send user message to AI
@@ -893,19 +922,9 @@ function App() {
       });
       
       // Reset the 30-second timeout after AI responds
-      if (isUserInputActive) {
-        console.log('AI responded during user conversation, resetting 30-second timeout');
-        
-        // Clear existing timeout
-        if (userInputTimeoutRef.current) {
-          clearTimeout(userInputTimeoutRef.current);
-        }
-        
-        // Set new 30-second timeout
-        userInputTimeoutRef.current = setTimeout(() => {
-          setIsUserInputActive(false);
-          console.log('User input timeout expired after AI response, resuming coordinate sending');
-        }, 30000);
+      if (isUserInputActiveRef.current) {
+        console.log('AI responded during user conversation, starting 30-second countdown.');
+        startCountdown();
       }
       
       console.log('User conversation response received');
@@ -925,17 +944,9 @@ function App() {
       });
       
       // Also reset timeout on error to allow retry
-      if (isUserInputActive) {
-        console.log('Error occurred during user conversation, resetting 30-second timeout');
-        
-        if (userInputTimeoutRef.current) {
-          clearTimeout(userInputTimeoutRef.current);
-        }
-        
-        userInputTimeoutRef.current = setTimeout(() => {
-          setIsUserInputActive(false);
-          console.log('User input timeout expired after error, resuming coordinate sending');
-        }, 30000);
+      if (isUserInputActiveRef.current) {
+        console.log('Error occurred during user conversation, starting 30-second countdown.');
+        startCountdown();
       }
     }
   };
@@ -1303,7 +1314,12 @@ function App() {
                 {isUserInputActive && (
                   <div className="user-input-status">
                     <span className="status-indicator active">User conversation active</span>
-                    <span className="status-note">Coordinate updates paused for 30 seconds</span>
+                    <span className="status-note">
+                      {countdown !== null
+                        ? `Coordinate updates resume in ${countdown}s`
+                        : 'Coordinate updates paused'
+                      }
+                    </span>
                   </div>
                 )}
               </div>
