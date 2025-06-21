@@ -38,7 +38,7 @@ const startIcon = createCustomIcon('#4CAF50');
 const endIcon = createCustomIcon('#F44336');
 const currentIcon = createCustomIcon('#2196F3');
 
-const AI_REQUEST_INTERVAL = 12000; // 12 seconds in milliseconds
+const AI_REQUEST_INTERVAL = 18000; // 18 seconds in milliseconds
 
 // Component to handle map clicks
 function MapClickHandler({ 
@@ -503,6 +503,14 @@ function App() {
       
       // Check if this is a duplicate of the last response
       const isDuplicate = lastResponseRef.current === aiMessage;
+
+      // Even if the request was sent, if we are now in user input mode, discard the response.
+      if (isUserInputActiveRef.current) {
+        console.warn(
+          '[sendCoordinateToAI] Discarding late narrative response because user input mode is now active.'
+        );
+        return;
+      }
 
       if (!isDuplicate) {
         lastResponseRef.current = aiMessage;
