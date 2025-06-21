@@ -84,6 +84,9 @@ function App() {
   const [selectedStartPoint, setSelectedStartPoint] = useState<Coordinate | null>(null);
   const [selectedEndPoint, setSelectedEndPoint] = useState<Coordinate | null>(null);
   const [mapSelectionStep, setMapSelectionStep] = useState<'start' | 'end'>('start');
+  const [userMessage, setUserMessage] = useState('');
+  const [isUserInputActive, setIsUserInputActive] = useState(false);
+  const userInputTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const walkingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const coordinateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastResponseRef = useRef<string>('');
@@ -312,13 +315,27 @@ function App() {
       let walkingContext = '';
       let directionInfo = '';
       
-      // Check if this is start, end, or during walking
-      if (currentCoordinateIndex === 0) {
+      // Calculate total route distance
+      let totalRouteDistance = 0;
+      for (let i = 0; i < coordinates.length - 1; i++) {
+        totalRouteDistance += calculateDistance(coordinates[i], coordinates[i + 1]);
+      }
+      
+      // Check if this is start, end, or during walking based on distance traveled
+      const distanceTraveled = totalDistanceTraveledRef.current;
+      const progressPercentage = (distanceTraveled / totalRouteDistance) * 100;
+      
+      console.log(`AI Context Debug - Distance traveled: ${distanceTraveled}m, Total route: ${totalRouteDistance}m, Progress: ${progressPercentage.toFixed(1)}%`);
+      
+      if (distanceTraveled < 50) { // Within first 50 meters
         walkingContext = 'START of route';
-      } else if (currentCoordinateIndex >= coordinates.length - 1) {
+        console.log('AI Context: START of route');
+      } else if (progressPercentage >= 95) { // Within last 5% of route
         walkingContext = 'END of route';
+        console.log('AI Context: END of route');
       } else {
         walkingContext = 'WALKING along route';
+        console.log('AI Context: WALKING along route');
         
         // Calculate direction and turning information
         const prevCoord = coordinates[currentCoordinateIndex - 1];
@@ -469,6 +486,12 @@ function App() {
 
   // Check if we should send AI request (every 20 seconds)
   const checkAndSendAiRequest = (currentCoord?: Coordinate) => {
+    // Don't send coordinate updates if user input mode is active
+    if (isUserInputActive) {
+      console.log('Skipping coordinate AI request - user input mode is active');
+      return;
+    }
+
     const currentTime = Date.now();
     const timeSinceLastAiCall = currentTime - lastAiCallTimeRef.current;
     
@@ -523,7 +546,8 @@ function App() {
     totalDistanceTraveledRef.current = 0; // Reset total distance traveled
     setNextAiCallTime(Date.now() + 20000); // Set initial next AI call time
 
-    // Send first coordinate immediately
+    // Send first coordinate immediately with START context
+    console.log('Sending first AI call with START context');
     sendCoordinateToAI(coordinates[0]);
 
     // Set up interval for coordinate updates - every 1 second
@@ -633,6 +657,10 @@ function App() {
         clearInterval(coordinateIntervalRef.current);
         coordinateIntervalRef.current = null;
       }
+      if (userInputTimeoutRef.current) {
+        clearTimeout(userInputTimeoutRef.current);
+        userInputTimeoutRef.current = null;
+      }
     };
   }, []);
 
@@ -689,6 +717,90 @@ function App() {
     setSelectedEndPoint(null);
     setMapSelectionStep('start');
     setIsMapSelectionMode(false);
+  };
+
+  // Handle user input submission
+  const handleUserInputSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userMessage.trim()) return;
+
+    // Activate user input mode and pause coordinate sending
+    setIsUserInputActive(true);
+    console.log('User input mode activated, pausing coordinate sending');
+
+    // Clear any existing timeout
+    if (userInputTimeoutRef.current) {
+      clearTimeout(userInputTimeoutRef.current);
+    }
+
+    // Send user message to AI
+    await sendUserMessageToAI(userMessage);
+    
+    // Clear the input
+    setUserMessage('');
+
+    // Set 30-second timeout to resume coordinate sending
+    userInputTimeoutRef.current = setTimeout(() => {
+      setIsUserInputActive(false);
+      console.log('User input timeout expired, resuming coordinate sending');
+    }, 30000);
+  };
+
+  // Send user message to AI
+  const sendUserMessageToAI = async (message: string) => {
+    try {
+      console.log('Sending user message to AI:', message);
+      
+      const payload = {
+        "input_value": `User message: ${message}. Current coordinates: ${currentCoordinate?.lat}, ${currentCoordinate?.lng}. Walking pace: ${currentPaceRef.current} km/h.`,
+        "output_type": "chat",
+        "input_type": "chat",
+        "session_id": "walkradio_user"
+      };
+
+      const options = {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      };
+
+      const response = await fetch('http://localhost:7860/api/v1/run/af5dbb48-ecb9-46ff-98cd-37ebd6d9b915', options);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('AI response to user message:', data);
+
+      let aiMessage = 'No response from AI';
+
+      if (data.outputs && data.outputs.length > 0) {
+        const output = data.outputs[0];
+        
+        if (output.outputs && output.outputs.length > 0) {
+          const result = output.outputs[0];
+          aiMessage = result.results.message.text;
+        }
+      }
+
+      const newResponse: AIResponse = {
+        timestamp: new Date().toLocaleTimeString(),
+        message: `You: ${message}\n\nAI: ${aiMessage}`
+      };
+      
+      setAiResponses(prev => [newResponse, ...prev]);
+      console.log('User conversation response received');
+    } catch (error) {
+      console.error('Error sending user message to AI:', error);
+      const errorResponse: AIResponse = {
+        timestamp: new Date().toLocaleTimeString(),
+        message: `You: ${message}\n\nError: ${error instanceof Error ? error.message : 'Unknown error'} - Make sure LangFlow is running on localhost:7860`
+      };
+      setAiResponses(prev => [errorResponse, ...prev]);
+    }
   };
 
   return (
@@ -1028,9 +1140,43 @@ function App() {
         {/* LangFlow AI Responses */}
         <div className="ai-section">
           <h3>LangFlow AI Responses</h3>
+          
+          {/* User Input Form */}
+          <div className="user-input-section">
+            <form onSubmit={handleUserInputSubmit} className="user-input-form">
+              <div className="input-group">
+                <label htmlFor="userMessage">Ask the AI anything:</label>
+                <div className="user-input-container">
+                  <input
+                    id="userMessage"
+                    type="text"
+                    value={userMessage}
+                    onChange={(e) => setUserMessage(e.target.value)}
+                    placeholder="Type your message here..."
+                    className="user-message-input"
+                    disabled={walkingState === 'stopped'}
+                  />
+                  <button
+                    type="submit"
+                    className="send-message-btn"
+                    disabled={!userMessage.trim() || walkingState === 'stopped'}
+                  >
+                    Send
+                  </button>
+                </div>
+                {isUserInputActive && (
+                  <div className="user-input-status">
+                    <span className="status-indicator active">User conversation active</span>
+                    <span className="status-note">Coordinate updates paused for 30 seconds</span>
+                  </div>
+                )}
+              </div>
+            </form>
+          </div>
+          
           <div className="ai-responses">
             {aiResponses.length === 0 ? (
-              <p className="no-responses">No AI responses yet. Start walking to see responses from LangFlow.</p>
+              <p className="no-responses">No AI responses yet. Start walking to see responses from LangFlow, or send a message above.</p>
             ) : (
               <div className="responses-container">
                 {aiResponses.map((response, index) => (
