@@ -1550,3 +1550,72 @@
     align-items: center;
     width: 100%;
 }
+
+.ai-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 2px solid #e2e8f0;
+}
+
+.playlist-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.audio-status {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: flex-end;
+}
+
+.audio-status .status-indicator {
+    font-size: 0.875rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.audio-status .status-indicator.converting {
+    background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+    color: white;
+    animation: pulse 2s infinite;
+}
+
+.audio-status .status-indicator.queued {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: white;
+}
+
+.playlist-controls .playlist-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background-color: #667eea;
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.playlist-controls .playlist-btn:hover:not(:disabled) {
+    background-color: #5a67d8;
+}
+
+.playlist-controls .playlist-btn:disabled {
+    background-color: #adb5bd;
+    cursor: not-allowed;
+}
+
+.playlist-controls .playlist-btn svg {
+    width: 18px;
+    height: 18px;
+}

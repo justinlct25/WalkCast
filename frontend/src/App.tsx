@@ -23,6 +23,16 @@ interface AIResponse {
   message: string;
   type: 'narrative' | 'conversation' | 'user-input' | 'loading';
   userMessage?: string;
+  audioUrl?: string; // Pre-converted audio URL
+  audioDuration?: number; // Duration in seconds
+}
+
+interface AudioQueueItem {
+  id: string;
+  audioUrl: string;
+  duration: number;
+  response: AIResponse;
+  isPlaying: boolean;
 }
 
 // Custom marker icons
@@ -39,7 +49,7 @@ const startIcon = createCustomIcon('#4CAF50');
 const endIcon = createCustomIcon('#F44336');
 const currentIcon = createCustomIcon('#2196F3');
 
-const AI_REQUEST_INTERVAL = 19000; // 19 seconds in milliseconds
+const AI_REQUEST_INTERVAL = 11000; // 11 seconds in milliseconds
 
 // Component to handle map clicks
 function MapClickHandler({ 
@@ -108,19 +118,55 @@ function App() {
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const [playingResponseId, setPlayingResponseId] = useState<string | null>(null);
+  const [playbackState, setPlaybackState] = useState<'stopped' | 'playing' | 'paused'>('stopped');
+  const [currentlyPlayingId, setCurrentlyPlayingId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const playedResponseIds = useRef(new Set<string>());
+  const [audioQueue, setAudioQueue] = useState<AudioQueueItem[]>([]);
+  const [isPreConverting, setIsPreConverting] = useState(false);
+  const audioQueueRef = useRef<AudioQueueItem[]>([]);
 
   // Update ref when state changes
   useEffect(() => {
     walkingStateRef.current = walkingState;
   }, [walkingState]);
 
+  // Sync audio queue with ref
+  useEffect(() => {
+    audioQueueRef.current = audioQueue;
+  }, [audioQueue]);
+
+  // Clean up audio queue periodically to prevent memory leaks
+  useEffect(() => {
+    const cleanupInterval = setInterval(() => {
+      if (audioQueue.length > 10) { // Only cleanup if queue is getting large
+        cleanupAudioQueue();
+      }
+    }, 30000); // Clean up every 30 seconds
+
+    return () => clearInterval(cleanupInterval);
+  }, [audioQueue.length]);
+
   // Update pace ref when walking pace changes
   useEffect(() => {
     currentPaceRef.current = walkingPace;
     console.log(`Walking pace updated to: ${walkingPace} km/h`);
   }, [walkingPace]);
+
+  // This effect is correct and should remain
+  useEffect(() => {
+    // If we are in 'playing' mode and nothing is currently speaking, try to play the next track.
+    if (playbackState === 'playing' && !audioRef.current) {
+      playNextUnplayed();
+    }
+  }, [aiResponses, playbackState]);
+
+  // When a walk is stopped, also stop the audio playback
+  useEffect(() => {
+    if (walkingState === 'stopped') {
+      stopPlayback();
+    }
+  }, [walkingState]);
 
   // Extract coordinates from URL
   const extractCoordinatesFromUrl = async (url: string): Promise<Coordinate[]> => {
@@ -519,6 +565,15 @@ function App() {
         lastResponseRef.current = aiMessage;
         setAiResponses(prev => [newResponse, ...prev]);
         console.log('AI response received:', newResponse.message);
+        
+        // Pre-convert the audio for seamless playback
+        if (newResponse.type === 'narrative' || newResponse.type === 'conversation') {
+          const audioItem = await preConvertToSpeech(newResponse);
+          if (audioItem) {
+            setAudioQueue(prev => [...prev, audioItem]);
+            console.log('Audio pre-converted and added to queue:', audioItem.duration.toFixed(1) + 's');
+          }
+        }
       } else {
         console.log('Duplicate response detected, not adding to state');
       }
@@ -1110,6 +1165,15 @@ function App() {
         return [newResponse, ...filtered];
       });
       
+      // Pre-convert the audio for seamless playback
+      if (newResponse.type === 'conversation') {
+        const audioItem = await preConvertToSpeech(newResponse);
+        if (audioItem) {
+          setAudioQueue(prev => [...prev, audioItem]);
+          console.log('Conversation audio pre-converted and added to queue:', audioItem.duration.toFixed(1) + 's');
+        }
+      }
+      
       // Reset the 25-second timeout after AI responds
       if (isUserInputActiveRef.current) {
         console.log('AI responded during user conversation, starting 25-second countdown.');
@@ -1140,36 +1204,21 @@ function App() {
     }
   };
 
-  const handlePlayAudio = async (text: string, responseId: string) => {
-    if (playingResponseId) {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-      setPlayingResponseId(null);
-      return;
+  const preConvertToSpeech = async (response: AIResponse): Promise<AudioQueueItem | null> => {
+    if (!elevenLabsApiKey || !response.message) {
+      return null;
     }
-
-    if (!elevenLabsApiKey || !elevenLabsApiKey.trim()) {
-      console.error('ElevenLabs API key is not configured. Please set `VITE_ELEVENLABS_API_KEY` in your .env file.');
-      const errorResponse: AIResponse = {
-        timestamp: new Date().toLocaleTimeString(),
-        message: 'ElevenLabs API key is not configured. Please set `VITE_ELEVENLABS_API_KEY` in your .env file.',
-        type: 'conversation',
-      };
-      setAiResponses(prev => [errorResponse, ...prev]);
-      return;
-    }
-
-    setPlayingResponseId(responseId);
 
     try {
+      setIsPreConverting(true);
       const elevenlabs = new ElevenLabsClient({ apiKey: elevenLabsApiKey });
       const audioStream = await elevenlabs.textToSpeech.convert('JBFqnCBsd6RMkjVDRZzb', {
-        text: text,
+        text: response.message,
         modelId: 'eleven_multilingual_v2',
+        outputFormat: 'mp3_44100_128',
       });
       
+      // Convert stream to blob for storage
       const reader = audioStream.getReader();
       const chunks: Uint8Array[] = [];
       while (true) {
@@ -1177,34 +1226,135 @@ function App() {
         if (done) break;
         chunks.push(value);
       }
+      
       const audioBlob = new Blob(chunks, { type: 'audio/mpeg' });
       const audioUrl = URL.createObjectURL(audioBlob);
       
-      const audio = new Audio(audioUrl);
+      // Create a temporary audio element to get duration
+      const tempAudio = new Audio(audioUrl);
+      const duration = await new Promise<number>((resolve) => {
+        tempAudio.addEventListener('loadedmetadata', () => {
+          resolve(tempAudio.duration);
+        });
+        tempAudio.addEventListener('error', () => {
+          resolve(0);
+        });
+      });
+
+      const audioItem: AudioQueueItem = {
+        id: response.timestamp,
+        audioUrl,
+        duration,
+        response,
+        isPlaying: false
+      };
+
+      return audioItem;
+    } catch (error) {
+      console.error('Error pre-converting text to speech:', error);
+      return null;
+    } finally {
+      setIsPreConverting(false);
+    }
+  };
+
+  const playNextUnplayed = async () => {
+    // Find the next unplayed audio item from the queue
+    const nextAudioItem = audioQueueRef.current.find(item => !playedResponseIds.current.has(item.id));
+
+    if (nextAudioItem) {
+      await playAudioFromQueue(nextAudioItem);
+    } else {
+      // Nothing to play, just wait for new items
+      console.log('Auto-play is active, waiting for new responses...');
+    }
+  };
+
+  const playAudioFromQueue = async (audioItem: AudioQueueItem) => {
+    setPlaybackState('playing');
+    setCurrentlyPlayingId(audioItem.id);
+    playedResponseIds.current.add(audioItem.id);
+
+    try {
+      const audio = new Audio(audioItem.audioUrl);
       audioRef.current = audio;
       audio.play();
 
       audio.onended = () => {
-        setPlayingResponseId(null);
-        URL.revokeObjectURL(audioUrl);
+        setCurrentlyPlayingId(null);
+        audioRef.current = null;
+        if (playbackState === 'playing') {
+          playNextUnplayed(); // Automatically play the next one
+        }
       };
       
       audio.onerror = () => {
-        console.error('Error playing audio element.');
-        setPlayingResponseId(null);
-        URL.revokeObjectURL(audioUrl);
+        console.error('Error playing audio track.');
+        setCurrentlyPlayingId(null);
+        audioRef.current = null;
+        // Try to play next even if current fails
+        if (playbackState === 'playing') {
+          playNextUnplayed();
+        }
       }
 
     } catch (error) {
-      console.error('Error fetching or playing audio:', error);
-      const errorResponse: AIResponse = {
-        timestamp: new Date().toLocaleTimeString(),
-        message: `Failed to play audio: ${error instanceof Error ? error.message : String(error)}`,
-        type: 'conversation',
-      };
-      setAiResponses(prev => [errorResponse, ...prev]);
-      setPlayingResponseId(null);
+      console.error('Error playing audio from queue:', error);
+      setCurrentlyPlayingId(null);
+      // Try to play next even if current fails
+      if (playbackState === 'playing') {
+        playNextUnplayed();
+      }
     }
+  };
+
+  const handlePlaybackToggle = () => {
+    if (playbackState === 'playing') {
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+      setPlaybackState('paused');
+    } else if (playbackState === 'paused') {
+      if (audioRef.current) {
+        audioRef.current.play();
+        setPlaybackState('playing');
+      } else {
+        // If audio was stopped somehow, restart the queue
+        playNextUnplayed();
+      }
+    } else { // 'stopped'
+      playedResponseIds.current.clear(); // Start fresh
+      playNextUnplayed();
+    }
+  };
+
+  const stopPlayback = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    setPlaybackState('stopped');
+    setCurrentlyPlayingId(null);
+    playedResponseIds.current.clear();
+    // Clear the audio queue and revoke URLs to prevent memory leaks
+    audioQueueRef.current.forEach(item => {
+      URL.revokeObjectURL(item.audioUrl);
+    });
+    setAudioQueue([]);
+  };
+
+  const cleanupAudioQueue = () => {
+    // Remove played items from queue and revoke their URLs
+    setAudioQueue(prev => {
+      const unplayedItems = prev.filter(item => !playedResponseIds.current.has(item.id));
+      // Revoke URLs for played items
+      prev.forEach(item => {
+        if (playedResponseIds.current.has(item.id)) {
+          URL.revokeObjectURL(item.audioUrl);
+        }
+      });
+      return unplayedItems;
+    });
   };
 
   return (
@@ -1543,7 +1693,34 @@ function App() {
 
         {/* LangFlow AI Responses */}
         <div className="ai-section">
-          <h3>LangFlow AI Responses</h3>
+          <div className="ai-section-header">
+            <h3>LangFlow AI Responses</h3>
+            <div className="playlist-controls">
+              <div className="audio-status">
+                {isPreConverting && (
+                  <span className="status-indicator converting">Converting audio...</span>
+                )}
+                {audioQueue.length > 0 && (
+                  <span className="status-indicator queued">
+                    {audioQueue.length} audio clips ready ({audioQueue.reduce((total, item) => total + item.duration, 0).toFixed(1)}s total)
+                  </span>
+                )}
+              </div>
+              <button 
+                onClick={handlePlaybackToggle}
+                className="playlist-btn"
+                disabled={aiResponses.filter(r => r.type === 'narrative' || r.type === 'conversation').length === 0}
+                title={playbackState === 'playing' ? 'Pause' : 'Go Live'}
+              >
+                {playbackState === 'playing' && <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>}
+                {playbackState === 'paused' && <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>}
+                {playbackState === 'stopped' && <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>}
+                <span>
+                  {playbackState === 'playing' ? 'Pause' : (playbackState === 'paused' ? 'Resume' : 'Go Live')}
+                </span>
+              </button>
+            </div>
+          </div>
           
           {/* User Input Form - Always at the top */}
           <div className="user-input-section">
@@ -1595,7 +1772,7 @@ function App() {
             ) : (
               <div className="responses-container">
                 {aiResponses.map((response, index) => (
-                  <div key={`${response.timestamp}-${index}`} className={`ai-response ${response.type} ${playingResponseId === response.timestamp ? 'playing' : ''}`}>
+                  <div key={`${response.timestamp}-${index}`} className={`ai-response ${response.type} ${currentlyPlayingId === response.timestamp ? 'playing' : ''}`}>
                     {response.type !== 'user-input' && (
                       <div className="response-header">
                         <div className="response-type-indicator">
@@ -1617,18 +1794,6 @@ function App() {
                           )}
                         </div>
                         <div className="response-actions">
-                          <button
-                            className="play-audio-btn"
-                            onClick={() => handlePlayAudio(response.message, response.timestamp)}
-                            disabled={playingResponseId !== null && playingResponseId !== response.timestamp}
-                            title={playingResponseId === response.timestamp ? "Stop" : "Play audio"}
-                          >
-                            {playingResponseId === response.timestamp ? (
-                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
-                            ) : (
-                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                            )}
-                          </button>
                           <span className="timestamp">{response.timestamp}</span>
                         </div>
                       </div>
