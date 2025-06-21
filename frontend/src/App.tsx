@@ -38,7 +38,7 @@ const startIcon = createCustomIcon('#4CAF50');
 const endIcon = createCustomIcon('#F44336');
 const currentIcon = createCustomIcon('#2196F3');
 
-const AI_REQUEST_INTERVAL = 18000; // 18 seconds in milliseconds
+const AI_REQUEST_INTERVAL = 19000; // 19 seconds in milliseconds
 
 // Component to handle map clicks
 function MapClickHandler({ 
@@ -103,6 +103,10 @@ function App() {
   const [nextAiCallTime, setNextAiCallTime] = useState<number>(0);
   const [countdown, setCountdown] = useState<number | null>(null);
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [elevenLabsApiKey] = useState('sk_348ed11f08d12c82d0503bfd0d977710ee8e7aa3cbc537d7');
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   // Update ref when state changes
   useEffect(() => {
@@ -816,6 +820,131 @@ function App() {
     countdownIntervalRef.current = intervalId;
   };
 
+  const handleStartRecording = async () => {
+    if (!elevenLabsApiKey.trim()) {
+      console.error('ElevenLabs API key is missing.');
+      return;
+    }
+    if (isRecording) return;
+
+    // Immediately stop narratives
+    setIsUserInputActive(true);
+    isUserInputActiveRef.current = true;
+    
+    // Clear any pending countdown
+    if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+    }
+    setCountdown(null);
+
+    setIsRecording(true);
+    audioChunksRef.current = [];
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        audioChunksRef.current.push(event.data);
+      };
+      mediaRecorderRef.current.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/mp3' });
+        // Stop the media stream tracks
+        stream.getTracks().forEach(track => track.stop());
+        transcribeAudio(audioBlob);
+      };
+      mediaRecorderRef.current.start();
+      console.log('Recording started');
+    } catch (err) {
+      console.error('Error accessing microphone:', err);
+      setIsRecording(false);
+      setIsUserInputActive(false);
+      isUserInputActiveRef.current = false;
+    }
+  };
+
+  const handleStopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      console.log('Recording stopped');
+    }
+  };
+
+  const transcribeAudio = async (audioBlob: Blob) => {
+    if (audioBlob.size === 0) {
+        console.warn('Audio blob is empty, not sending for transcription.');
+        setIsUserInputActive(false);
+        isUserInputActiveRef.current = false;
+        return;
+    }
+    console.log('Transcribing audio...');
+
+    const loadingResponse: AIResponse = {
+      timestamp: new Date().toLocaleTimeString(),
+      message: 'Transcribing audio...',
+      type: 'loading',
+    };
+    setAiResponses(prev => [loadingResponse, ...prev]);
+
+    const formData = new FormData();
+    formData.append('file', audioBlob, 'audio.mp3');
+
+    try {
+      const response = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+        method: 'POST',
+        headers: {
+          'xi-api-key': elevenLabsApiKey,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`ElevenLabs API error: ${response.statusText} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      const transcribedText = data.text;
+      console.log('Transcription result:', transcribedText);
+
+      setAiResponses(prev => prev.filter(r => r.type !== 'loading'));
+      
+      if (transcribedText && transcribedText.trim()) {
+        const userInputResponse: AIResponse = {
+            timestamp: new Date().toLocaleTimeString(),
+            message: transcribedText,
+            type: 'user-input',
+            userMessage: transcribedText,
+        };
+        setAiResponses(prev => [userInputResponse, ...prev]);
+        
+        const aiLoadingResponse: AIResponse = {
+            timestamp: new Date().toLocaleTimeString(),
+            message: 'AI is thinking...',
+            type: 'loading',
+        };
+        setAiResponses(prev => [aiLoadingResponse, ...prev]);
+
+        await sendUserMessageToAI(transcribedText);
+      } else {
+        setIsUserInputActive(false);
+        isUserInputActiveRef.current = false;
+      }
+    } catch (error) {
+      console.error('Error transcribing audio:', error);
+      setAiResponses(prev => prev.filter(r => r.type !== 'loading'));
+      const errorResponse: AIResponse = {
+        timestamp: new Date().toLocaleTimeString(),
+        message: 'Failed to transcribe audio.',
+        type: 'conversation',
+      };
+      setAiResponses(prev => [errorResponse, ...prev]);
+      setIsUserInputActive(false);
+      isUserInputActiveRef.current = false;
+    }
+  };
+
   // Handle map click for point selection
   const handleMapClick = (event: L.LeafletMouseEvent) => {
     if (!isMapSelectionMode) return;
@@ -1371,6 +1500,15 @@ function App() {
                     disabled={!userMessage.trim() || walkingState === 'stopped'}
                   >
                     Send
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={handleStartRecording}
+                    onMouseUp={handleStopRecording}
+                    className={`mic-btn ${isRecording ? 'recording' : ''}`}
+                    disabled={walkingState === 'stopped'}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
                   </button>
                 </div>
                 {isUserInputActive && (
