@@ -847,8 +847,8 @@ function App() {
       countdownIntervalRef.current = null;
     }
     
-    console.log('[COUNTDOWN] Starting 25s countdown.');
-    setCountdown(25);
+    console.log('[COUNTDOWN] Starting 20s countdown.');
+    setCountdown(20);
   
     const intervalId = setInterval(() => {
       // We use setCountdown's functional update to avoid stale `countdown` values.
@@ -939,7 +939,7 @@ function App() {
   const handleMicButtonClick = () => {
     if (isRecording) {
       handleStopRecording();
-      // Don't resume audio playback automatically - wait for AI conversation response
+      // Don't resume audio playback automatically - wait for AI conversaton response
       // Resume coordinate updates when stopping recording
       if (walkingState === 'paused') {
         continueWalking();
@@ -1201,9 +1201,9 @@ function App() {
         }
       }
       
-      // Reset the 25-second timeout after AI responds
+      // Reset the 22-second timeout after AI responds
       if (isUserInputActiveRef.current) {
-        console.log('AI responded during user conversation, starting 25-second countdown.');
+        console.log('AI responded during user conversation, starting 22-second countdown.');
         startCountdown();
       }
       
@@ -1225,7 +1225,7 @@ function App() {
       
       // Also reset timeout on error to allow retry
       if (isUserInputActiveRef.current) {
-        console.log('Error occurred during user conversation, starting 25-second countdown.');
+        console.log('Error occurred during user conversation, starting 22-second countdown.');
         startCountdown();
       }
     }
@@ -1387,7 +1387,7 @@ function App() {
   return (
     <div className="App">
       <header className="App-header">
-        <h1>WalkRadio - AI Walking Companion</h1>
+        <h1>WalkCast - AI Walking Companion</h1>
       </header>
 
       <div className="main-container">
