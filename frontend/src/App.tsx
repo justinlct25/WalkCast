@@ -1402,8 +1402,8 @@ function App() {
                             </>
                           ) : (
                             <>
-                              <span className="type-icon loading">⏳</span>
-                              <span className="type-label">AI Thinking</span>
+                              <span className="type-icon conversation">💬</span>
+                              <span className="type-label">Conversation</span>
                             </>
                           )}
                         </div>
