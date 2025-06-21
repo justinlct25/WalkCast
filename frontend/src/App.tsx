@@ -20,6 +20,8 @@ interface Coordinate {
 interface AIResponse {
   timestamp: string;
   message: string;
+  type: 'narrative' | 'conversation' | 'user-input' | 'loading';
+  userMessage?: string;
 }
 
 // Custom marker icons
@@ -84,6 +86,9 @@ function App() {
   const [selectedStartPoint, setSelectedStartPoint] = useState<Coordinate | null>(null);
   const [selectedEndPoint, setSelectedEndPoint] = useState<Coordinate | null>(null);
   const [mapSelectionStep, setMapSelectionStep] = useState<'start' | 'end'>('start');
+  const [userMessage, setUserMessage] = useState('');
+  const [isUserInputActive, setIsUserInputActive] = useState(false);
+  const userInputTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const walkingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const coordinateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastResponseRef = useRef<string>('');
@@ -280,6 +285,29 @@ function App() {
 
   // Calculate bearing between two coordinates
   const calculateBearing = (coord1: Coordinate, coord2: Coordinate): number => {
+    console.log('=== calculateBearing ENTRY ===');
+    console.log('coord1:', coord1);
+    console.log('coord2:', coord2);
+    console.log('coord1 type:', typeof coord1);
+    console.log('coord2 type:', typeof coord2);
+    
+    // Validate inputs before any property access
+    if (!coord1 || !coord2) {
+      console.error('calculateBearing: One or both coordinates are null/undefined:', { coord1, coord2 });
+      throw new Error('Invalid coordinates provided to calculateBearing');
+    }
+    
+    if (typeof coord1.lng !== 'number' || typeof coord1.lat !== 'number' || 
+        typeof coord2.lng !== 'number' || typeof coord2.lat !== 'number') {
+      console.error('calculateBearing: Invalid coordinate types:', { 
+        coord1: { lng: typeof coord1.lng, lat: typeof coord1.lat },
+        coord2: { lng: typeof coord2.lng, lat: typeof coord2.lat }
+      });
+      throw new Error('Invalid coordinate types provided to calculateBearing');
+    }
+    
+    console.log('calculateBearing called with:', { coord1, coord2 });
+    
     const Δλ = (coord2.lng - coord1.lng) * Math.PI / 180;
     const y = Math.sin(Δλ) * Math.cos(coord2.lat * Math.PI / 180);
     const x = Math.cos(coord1.lat * Math.PI / 180) * Math.sin(coord2.lat * Math.PI / 180) -
@@ -296,7 +324,7 @@ function App() {
   };
 
   // Send coordinate to AI with LangFlow API
-  const sendCoordinateToAI = async (coord: Coordinate) => {
+  const sendCoordinateToAI = async (coord: Coordinate, currentIndex?: number) => {
     // Prevent duplicate API calls
     if (isApiCallInProgressRef.current) {
       console.log('API call already in progress, skipping...');
@@ -312,36 +340,96 @@ function App() {
       let walkingContext = '';
       let directionInfo = '';
       
-      // Check if this is start, end, or during walking
-      if (currentCoordinateIndex === 0) {
+      // Calculate total route distance
+      let totalRouteDistance = 0;
+      try {
+        for (let i = 0; i < coordinates.length - 1; i++) {
+          if (coordinates[i] && coordinates[i + 1]) {
+            totalRouteDistance += calculateDistance(coordinates[i], coordinates[i + 1]);
+          }
+        }
+      } catch (error) {
+        console.warn('Error calculating total route distance:', error);
+        totalRouteDistance = 1000; // Fallback distance
+      }
+      
+      // Check if this is start, end, or during walking based on coordinate position
+      const distanceTraveled = totalDistanceTraveledRef.current;
+      const progressPercentage = (distanceTraveled / totalRouteDistance) * 100;
+      
+      // Use the passed index or fall back to state
+      const indexToUse = currentIndex !== undefined ? currentIndex : currentCoordinateIndex;
+      
+      console.log(`AI Context Debug - Distance traveled: ${distanceTraveled}m, Total route: ${totalRouteDistance}m, Progress: ${progressPercentage.toFixed(1)}%, Current index: ${indexToUse}`);
+      console.log(`Context conditions - indexToUse === 0: ${indexToUse === 0}, progressPercentage >= 95: ${progressPercentage >= 95}`);
+      
+      if (indexToUse === 0) { // First coordinate only
         walkingContext = 'START of route';
-      } else if (currentCoordinateIndex >= coordinates.length - 1) {
+        console.log('AI Context: START of route');
+      } else if (progressPercentage >= 95) { // Within last 5% of route
         walkingContext = 'END of route';
+        console.log('AI Context: END of route');
       } else {
         walkingContext = 'WALKING along route';
+        console.log('AI Context: WALKING along route');
         
         // Calculate direction and turning information
-        const prevCoord = coordinates[currentCoordinateIndex - 1];
+        const prevCoord = indexToUse > 0 ? coordinates[indexToUse - 1] : null;
         const currentCoord = coord;
-        const nextCoord = coordinates[currentCoordinateIndex + 1];
+        const nextCoord = indexToUse < coordinates.length - 1 ? coordinates[indexToUse + 1] : null;
         
-        // Calculate current direction (bearing)
-        const currentBearing = calculateBearing(prevCoord, currentCoord);
-        const nextBearing = calculateBearing(currentCoord, nextCoord);
+        console.log('Direction calculation debug:', {
+          currentCoordinateIndex: indexToUse,
+          coordinatesLength: coordinates.length,
+          prevCoord,
+          currentCoord,
+          nextCoord,
+          prevCoordValid: prevCoord && typeof prevCoord.lng === 'number' && typeof prevCoord.lat === 'number',
+          currentCoordValid: currentCoord && typeof currentCoord.lng === 'number' && typeof currentCoord.lat === 'number',
+          nextCoordValid: nextCoord && typeof nextCoord.lng === 'number' && typeof nextCoord.lat === 'number'
+        });
         
-        // Determine direction name
-        const directionName = getDirectionName(currentBearing);
-        
-        // Check if turning
-        const bearingDiff = Math.abs(nextBearing - currentBearing);
-        let turningInfo = '';
-        
-        if (bearingDiff > 30) {
-          const turnDirection = nextBearing > currentBearing ? 'right' : 'left';
-          turningInfo = `, turning ${turnDirection}`;
+        // Debug: Check if coordinates array has undefined values
+        if (indexToUse > 0 && indexToUse < coordinates.length) {
+          console.log('Coordinates array debug:', {
+            'coordinates[indexToUse - 1]': coordinates[indexToUse - 1],
+            'coordinates[indexToUse]': coordinates[indexToUse],
+            'coordinates[indexToUse + 1]': coordinates[indexToUse + 1]
+          });
         }
         
-        directionInfo = `, heading ${directionName}${turningInfo}`;
+        // Calculate current direction (bearing) - only if we have valid coordinates
+        try {
+          if (prevCoord && currentCoord && 
+              typeof prevCoord.lng === 'number' && typeof prevCoord.lat === 'number' &&
+              typeof currentCoord.lng === 'number' && typeof currentCoord.lat === 'number') {
+            
+            console.log('About to call calculateBearing with prevCoord and currentCoord:', { prevCoord, currentCoord });
+            const currentBearing = calculateBearing(prevCoord, currentCoord);
+            const directionName = getDirectionName(currentBearing);
+            
+            // Check if turning - only if we have a next coordinate
+            if (nextCoord && 
+                typeof nextCoord.lng === 'number' && typeof nextCoord.lat === 'number') {
+              
+              console.log('About to call calculateBearing with currentCoord and nextCoord:', { currentCoord, nextCoord });
+              const nextBearing = calculateBearing(currentCoord, nextCoord);
+              const bearingDiff = Math.abs(nextBearing - currentBearing);
+              
+              if (bearingDiff > 30) {
+                const turnDirection = nextBearing > currentBearing ? 'right' : 'left';
+                directionInfo = `, heading ${directionName}, turning ${turnDirection}`;
+              } else {
+                directionInfo = `, heading ${directionName}`;
+              }
+            } else {
+              directionInfo = `, heading ${directionName}`;
+            }
+          }
+        } catch (error) {
+          console.warn('Error calculating direction info:', error);
+          directionInfo = ''; // Fallback to empty direction info
+        }
       }
       
       const payload = {
@@ -381,7 +469,8 @@ function App() {
 
       const newResponse: AIResponse = {
         timestamp: new Date().toLocaleTimeString(),
-        message: aiMessage
+        message: aiMessage,
+        type: 'narrative'
       };
       
       // Check if this is a duplicate of the last response
@@ -398,7 +487,8 @@ function App() {
       console.error('Error sending coordinate to LangFlow:', error);
       const errorResponse: AIResponse = {
         timestamp: new Date().toLocaleTimeString(),
-        message: `Error: ${error instanceof Error ? error.message : 'Unknown error'} - Make sure LangFlow is running on localhost:7860`
+        message: `Error: ${error instanceof Error ? error.message : 'Unknown error'} - Make sure LangFlow is running on localhost:7860`,
+        type: 'narrative'
       };
       setAiResponses(prev => [errorResponse, ...prev]);
     } finally {
@@ -444,8 +534,8 @@ function App() {
         setCurrentCoordinate(interpolatedCoord);
         setCurrentCoordinateIndex(i);
         
-        // Check AI request with the current interpolated coordinate
-        checkAndSendAiRequest(interpolatedCoord);
+        // Check AI request with the current interpolated coordinate and index
+        checkAndSendAiRequest(interpolatedCoord, i);
         return;
       }
       
@@ -468,7 +558,13 @@ function App() {
   };
 
   // Check if we should send AI request (every 20 seconds)
-  const checkAndSendAiRequest = (currentCoord?: Coordinate) => {
+  const checkAndSendAiRequest = (currentCoord?: Coordinate, currentIndex?: number) => {
+    // Don't send coordinate updates if user input mode is active
+    if (isUserInputActive) {
+      console.log('Skipping coordinate AI request - user input mode is active');
+      return;
+    }
+
     const currentTime = Date.now();
     const timeSinceLastAiCall = currentTime - lastAiCallTimeRef.current;
     
@@ -479,7 +575,7 @@ function App() {
     
     if (timeSinceLastAiCall >= 20000 && coordToUse) { // 20 seconds
       console.log('Sending AI request - 20 seconds have passed');
-      sendCoordinateToAI(coordToUse);
+      sendCoordinateToAI(coordToUse, currentIndex);
       lastAiCallTimeRef.current = currentTime;
       setNextAiCallTime(currentTime + 20000); // Set next AI call time
     } else if (timeSinceLastAiCall >= 20000 && !coordToUse) {
@@ -523,8 +619,9 @@ function App() {
     totalDistanceTraveledRef.current = 0; // Reset total distance traveled
     setNextAiCallTime(Date.now() + 20000); // Set initial next AI call time
 
-    // Send first coordinate immediately
-    sendCoordinateToAI(coordinates[0]);
+    // Send first coordinate immediately with START context
+    console.log('Sending first AI call with START context');
+    sendCoordinateToAI(coordinates[0], 0);
 
     // Set up interval for coordinate updates - every 1 second
     console.log('Creating coordinate update interval - every 1 second');
@@ -537,10 +634,10 @@ function App() {
   const pauseWalking = () => {
     console.log('Pausing walking simulation');
     setWalkingState('paused');
-    if (walkingIntervalRef.current) {
-      clearInterval(walkingIntervalRef.current);
-      walkingIntervalRef.current = null;
-    }
+          if (walkingIntervalRef.current) {
+            clearInterval(walkingIntervalRef.current);
+            walkingIntervalRef.current = null;
+          }
     if (coordinateIntervalRef.current) {
       clearInterval(coordinateIntervalRef.current);
       coordinateIntervalRef.current = null;
@@ -633,6 +730,10 @@ function App() {
         clearInterval(coordinateIntervalRef.current);
         coordinateIntervalRef.current = null;
       }
+      if (userInputTimeoutRef.current) {
+        clearTimeout(userInputTimeoutRef.current);
+        userInputTimeoutRef.current = null;
+      }
     };
   }, []);
 
@@ -691,6 +792,121 @@ function App() {
     setIsMapSelectionMode(false);
   };
 
+  // Handle user input submission
+  const handleUserInputSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userMessage.trim()) return;
+
+    // Activate user input mode and pause coordinate sending
+    setIsUserInputActive(true);
+    console.log('User input mode activated, pausing coordinate sending');
+
+    // Clear any existing timeout
+    if (userInputTimeoutRef.current) {
+      clearTimeout(userInputTimeoutRef.current);
+    }
+
+    // Immediately show user's message
+    const userInputResponse: AIResponse = {
+      timestamp: new Date().toLocaleTimeString(),
+      message: userMessage,
+      type: 'user-input',
+      userMessage: userMessage
+    };
+    setAiResponses(prev => [userInputResponse, ...prev]);
+
+    // Show loading state
+    const loadingResponse: AIResponse = {
+      timestamp: new Date().toLocaleTimeString(),
+      message: 'AI is thinking...',
+      type: 'loading'
+    };
+    setAiResponses(prev => [loadingResponse, ...prev]);
+
+    // Send user message to AI
+    await sendUserMessageToAI(userMessage);
+    
+    // Clear the input
+    setUserMessage('');
+
+    // Set 30-second timeout to resume coordinate sending
+    userInputTimeoutRef.current = setTimeout(() => {
+      setIsUserInputActive(false);
+      console.log('User input timeout expired, resuming coordinate sending');
+    }, 30000);
+  };
+
+  // Send user message to AI
+  const sendUserMessageToAI = async (message: string) => {
+    try {
+      console.log('Sending user message to AI:', message);
+      
+      const payload = {
+        "input_value": `User message: ${message}. Current coordinates: ${currentCoordinate?.lat}, ${currentCoordinate?.lng}. Walking pace: ${currentPaceRef.current} km/h.`,
+        "output_type": "chat",
+        "input_type": "chat",
+        "session_id": "walkradio_user"
+      };
+
+      const options = {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      };
+
+      const response = await fetch('http://localhost:7860/api/v1/run/af5dbb48-ecb9-46ff-98cd-37ebd6d9b915', options);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('AI response to user message:', data);
+
+      let aiMessage = 'No response from AI';
+
+      if (data.outputs && data.outputs.length > 0) {
+        const output = data.outputs[0];
+        
+        if (output.outputs && output.outputs.length > 0) {
+          const result = output.outputs[0];
+          aiMessage = result.results.message.text;
+        }
+      }
+
+      const newResponse: AIResponse = {
+        timestamp: new Date().toLocaleTimeString(),
+        message: aiMessage,
+        type: 'conversation',
+        userMessage: message
+      };
+      
+      // Remove the loading state and add the AI response
+      setAiResponses(prev => {
+        const filtered = prev.filter(response => response.type !== 'loading');
+        return [newResponse, ...filtered];
+      });
+      
+      console.log('User conversation response received');
+    } catch (error) {
+      console.error('Error sending user message to AI:', error);
+      
+      // Remove the loading state and add the error response
+      setAiResponses(prev => {
+        const filtered = prev.filter(response => response.type !== 'loading');
+        const errorResponse: AIResponse = {
+          timestamp: new Date().toLocaleTimeString(),
+          message: `Error: ${error instanceof Error ? error.message : 'Unknown error'} - Make sure LangFlow is running on localhost:7860`,
+          type: 'conversation',
+          userMessage: message
+        };
+        return [errorResponse, ...filtered];
+      });
+    }
+  };
+
   return (
     <div className="App">
       <header className="App-header">
@@ -728,35 +944,35 @@ function App() {
 
           {/* URL Input Method */}
           {!isMapSelectionMode && (
-            <div className="input-group">
+          <div className="input-group">
               <label htmlFor="routeUrl">BRouter Route URL:</label>
-              <div className="brouter-help">
-                <p>Create your route at <a href="https://brouter.damsy.net/" target="_blank" rel="noopener noreferrer">BRouter Map</a></p>
-                <small>1. Go to BRouter Map 2. Draw your route 3. Copy the URL 4. Paste it here</small>
-              </div>
-              <input
-                id="routeUrl"
-                type="text"
-                value={routeUrl}
-                onChange={handleUrlChange}
-                onPaste={(e) => {
-                  const pastedText = e.clipboardData.getData('text');
-                  setRouteUrl(pastedText);
-                  
-                  // Validate and process immediately on paste
-                  const isValid = validateBRouterUrl(pastedText);
-                  setIsValidUrl(isValid);
-                  
-                  if (isValid && !isProcessingRoute) {
-                    setTimeout(() => {
-                      processRouteUrl();
-                    }, 100);
-                  }
-                }}
-                placeholder="https://brouter.damsy.net/..."
-                className={`route-input ${!isValidUrl && routeUrl.trim() !== '' ? 'invalid-url' : ''} ${isProcessingRoute ? 'processing' : ''}`}
-              />
+            <div className="brouter-help">
+              <p>Create your route at <a href="https://brouter.damsy.net/" target="_blank" rel="noopener noreferrer">BRouter Map</a></p>
+              <small>1. Go to BRouter Map 2. Draw your route 3. Copy the URL 4. Paste it here</small>
             </div>
+            <input
+              id="routeUrl"
+              type="text"
+              value={routeUrl}
+              onChange={handleUrlChange}
+              onPaste={(e) => {
+                const pastedText = e.clipboardData.getData('text');
+                setRouteUrl(pastedText);
+                
+                // Validate and process immediately on paste
+                const isValid = validateBRouterUrl(pastedText);
+                setIsValidUrl(isValid);
+                
+                if (isValid && !isProcessingRoute) {
+                  setTimeout(() => {
+                    processRouteUrl();
+                  }, 100);
+                }
+              }}
+              placeholder="https://brouter.damsy.net/..."
+              className={`route-input ${!isValidUrl && routeUrl.trim() !== '' ? 'invalid-url' : ''} ${isProcessingRoute ? 'processing' : ''}`}
+            />
+          </div>
           )}
 
           {/* Map Selection Method */}
@@ -811,15 +1027,15 @@ function App() {
               >
                 -
               </button>
-              <input
-                id="walkingPace"
-                type="number"
-                value={walkingPace}
-                onChange={(e) => setWalkingPace(Number(e.target.value))}
+            <input
+              id="walkingPace"
+              type="number"
+              value={walkingPace}
+              onChange={(e) => setWalkingPace(Number(e.target.value))}
                 min="0.5"
-                max="50"
+              max="50"
                 step="0.5"
-                className="pace-input"
+              className="pace-input"
                 placeholder="20.0"
               />
               <span className="pace-unit">km/h</span>
@@ -1028,21 +1244,108 @@ function App() {
         {/* LangFlow AI Responses */}
         <div className="ai-section">
           <h3>LangFlow AI Responses</h3>
+          
           <div className="ai-responses">
             {aiResponses.length === 0 ? (
-              <p className="no-responses">No AI responses yet. Start walking to see responses from LangFlow.</p>
+              <p className="no-responses">No AI responses yet. Start walking to see responses from LangFlow, or send a message below.</p>
             ) : (
               <div className="responses-container">
                 {aiResponses.map((response, index) => (
-                  <div key={`${response.timestamp}-${index}`} className="ai-response">
+                  <div key={`${response.timestamp}-${index}`} className={`ai-response ${response.type}`}>
                     <div className="response-header">
+                      <div className="response-type-indicator">
+                        {response.type === 'narrative' ? (
+                          <>
+                            <span className="type-icon narrative">📍</span>
+                            <span className="type-label">Surrounding Narrative</span>
+                          </>
+                        ) : response.type === 'conversation' ? (
+                          <>
+                            <span className="type-icon conversation">💬</span>
+                            <span className="type-label">Conversation</span>
+                          </>
+                        ) : response.type === 'user-input' ? (
+                          <>
+                            <span className="type-icon user-input">👤</span>
+                            <span className="type-label">You</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="type-icon loading">⏳</span>
+                            <span className="type-label">AI Thinking</span>
+                          </>
+                        )}
+                      </div>
                       <span className="timestamp">{response.timestamp}</span>
                     </div>
-                    <div className="response-message">{response.message}</div>
+                    <div className="response-message">
+                      {response.type === 'conversation' ? (
+                        <div className="conversation-content">
+                          <div className="ai-message">
+                            <span className="ai-label">AI:</span>
+                            <span className="ai-text">{response.message}</span>
+                          </div>
+                        </div>
+                      ) : response.type === 'user-input' ? (
+                        <div className="conversation-content">
+                          <div className="user-message">
+                            <span className="user-label">You:</span>
+                            <span className="user-text">{response.message}</span>
+                          </div>
+                        </div>
+                      ) : response.type === 'loading' ? (
+                        <div className="loading-content">
+                          <div className="loading-message">
+                            <span className="loading-text">{response.message}</span>
+                            <div className="loading-dots">
+                              <span></span>
+                              <span></span>
+                              <span></span>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="narrative-content">
+                          {response.message}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
             )}
+            
+            {/* User Input Form - Now integrated into responses section */}
+            <div className="user-input-section">
+              <form onSubmit={handleUserInputSubmit} className="user-input-form">
+                <div className="input-group">
+                  <div className="user-input-container">
+                    <input
+                      id="userMessage"
+                      type="text"
+                      value={userMessage}
+                      onChange={(e) => setUserMessage(e.target.value)}
+                      placeholder="Ask the AI anything about your surroundings..."
+                      className="user-message-input"
+                      disabled={walkingState === 'stopped'}
+                    />
+                    <button
+                      type="submit"
+                      className="send-message-btn"
+                      disabled={!userMessage.trim() || walkingState === 'stopped'}
+                    >
+                      Send
+                    </button>
+          </div>
+                  {isUserInputActive && (
+                    <div className="user-input-status">
+                      <span className="status-indicator active">User conversation active</span>
+                      <span className="status-note">Coordinate updates paused for 30 seconds</span>
+        </div>
+                  )}
+                </div>
+              </form>
+            </div>
           </div>
         </div>
       </div>
