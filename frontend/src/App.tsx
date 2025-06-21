@@ -376,10 +376,14 @@ function App() {
         walkingContext = 'START of route';
         console.log('AI Context: START of route');
       } else if (progressPercentage >= 95) { // Within last 5% of route
+        console.log('AI Context: START of route');
+      } else if (progressPercentage >= 95) { // Within last 5% of route
         walkingContext = 'END of route';
+        console.log('AI Context: END of route');
         console.log('AI Context: END of route');
       } else {
         walkingContext = 'WALKING along route';
+        console.log('AI Context: WALKING along route');
         console.log('AI Context: WALKING along route');
         
         // Calculate direction and turning information

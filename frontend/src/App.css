@@ -1265,8 +1265,9 @@
 
 .route-ready p {
     margin: 0;
-    color: #2f855a;
+    color: #48bb78;
     font-weight: 600;
+<<<<<<< HEAD
     font-size: 0.9rem;
 }
 
@@ -1355,5 +1356,117 @@
     }
     .pace-unit {
         text-align: center;
+=======
+}
+
+
+/* User Input Styles */
+
+.user-input-section {
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+.user-input-form {
+    margin: 0;
+}
+
+.user-input-container {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.user-message-input {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 1rem;
+    transition: all 0.2s ease;
+    background: white;
+}
+
+.user-message-input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.user-message-input:disabled {
+    background-color: #f7fafc;
+    color: #a0aec0;
+    cursor: not-allowed;
+}
+
+.send-message-btn {
+    padding: 0.75rem 1.5rem;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.send-message-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.send-message-btn:disabled {
+    background: #cbd5e0;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.user-input-status {
+    margin-top: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.status-indicator {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+
+.status-indicator.active {
+    background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+    color: white;
+}
+
+.status-note {
+    font-size: 0.875rem;
+    color: #718096;
+    font-style: italic;
+}
+
+@media (max-width: 768px) {
+    .user-input-container {
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+    .send-message-btn {
+        width: 100%;
+    }
+    .user-input-status {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.25rem;
+>>>>>>> 31ad0458156173eb9cfcb9079fe785734dc90828
     }
 }
