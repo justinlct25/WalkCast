@@ -572,6 +572,10 @@ function App() {
           if (audioItem) {
             setAudioQueue(prev => [...prev, audioItem]);
             console.log('Audio pre-converted and added to queue:', audioItem.duration.toFixed(1) + 's');
+            
+            // Immediately start playing the conversation response
+            setPlaybackState('playing');
+            await playAudioFromQueue(audioItem);
           }
         }
       } else {
@@ -935,7 +939,26 @@ function App() {
   const handleMicButtonClick = () => {
     if (isRecording) {
       handleStopRecording();
+      // Don't resume audio playback automatically - wait for AI conversation response
+      // Resume coordinate updates when stopping recording
+      if (walkingState === 'paused') {
+        continueWalking();
+      }
     } else {
+      // Set user input active to prevent narratives during recording
+      setIsUserInputActive(true);
+      isUserInputActiveRef.current = true;
+      
+      // Immediately stop current audio playback when starting to record
+      if (playbackState === 'playing' && audioRef.current) {
+        audioRef.current.pause();
+        setPlaybackState('paused');
+      }
+      
+      // Pause coordinate updates when starting to record
+      if (walkingState === 'walking') {
+        pauseWalking();
+      }
       handleStartRecording();
     }
   };
@@ -1171,6 +1194,10 @@ function App() {
         if (audioItem) {
           setAudioQueue(prev => [...prev, audioItem]);
           console.log('Conversation audio pre-converted and added to queue:', audioItem.duration.toFixed(1) + 's');
+          
+          // Immediately start playing the conversation response
+          setPlaybackState('playing');
+          await playAudioFromQueue(audioItem);
         }
       }
       
