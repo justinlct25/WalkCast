@@ -113,11 +113,6 @@ function App() {
     console.log(`Walking pace updated to: ${walkingPace} km/h`);
   }, [walkingPace]);
 
-  useEffect(() => {
-    isUserInputActiveRef.current = isUserInputActive;
-    console.log(`User input mode active: ${isUserInputActive}`);
-  }, [isUserInputActive]);
-
   // Extract coordinates from URL
   const extractCoordinatesFromUrl = async (url: string): Promise<Coordinate[]> => {
     try {
@@ -761,7 +756,6 @@ function App() {
           clearInterval(countdownIntervalRef.current!);
           countdownIntervalRef.current = null;
           setIsUserInputActive(false);
-          isUserInputActiveRef.current = false; // Set ref immediately
           console.log('Countdown finished, resuming coordinate sending.');
           return null;
         }
@@ -832,7 +826,6 @@ function App() {
 
     // Activate user input mode and pause coordinate sending
     setIsUserInputActive(true);
-    isUserInputActiveRef.current = true; // Set ref immediately
     console.log('User input mode activated, pausing coordinate sending');
 
     // Clear any existing timeout
@@ -922,7 +915,7 @@ function App() {
       });
       
       // Reset the 30-second timeout after AI responds
-      if (isUserInputActiveRef.current) {
+      if (isUserInputActive) {
         console.log('AI responded during user conversation, starting 30-second countdown.');
         startCountdown();
       }
@@ -944,7 +937,7 @@ function App() {
       });
       
       // Also reset timeout on error to allow retry
-      if (isUserInputActiveRef.current) {
+      if (isUserInputActive) {
         console.log('Error occurred during user conversation, starting 30-second countdown.');
         startCountdown();
       }
