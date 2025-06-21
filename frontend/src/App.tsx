@@ -806,7 +806,7 @@ function App() {
       clearTimeout(userInputTimeoutRef.current);
     }
 
-    // Immediately show user's message
+    // Immediately show user's message in conversation area
     const userInputResponse: AIResponse = {
       timestamp: new Date().toLocaleTimeString(),
       message: userMessage,
@@ -815,7 +815,7 @@ function App() {
     };
     setAiResponses(prev => [userInputResponse, ...prev]);
 
-    // Show loading state
+    // Show loading state immediately after user message
     const loadingResponse: AIResponse = {
       timestamp: new Date().toLocaleTimeString(),
       message: 'AI is thinking...',
@@ -823,12 +823,15 @@ function App() {
     };
     setAiResponses(prev => [loadingResponse, ...prev]);
 
-    // Send user message to AI
-    await sendUserMessageToAI(userMessage);
+    // Store the user message for the AI call
+    const messageToSend = userMessage;
     
-    // Clear the input
+    // Clear the input immediately
     setUserMessage('');
 
+    // Send user message to AI
+    await sendUserMessageToAI(messageToSend);
+    
     // Set 30-second timeout to resume coordinate sending
     userInputTimeoutRef.current = setTimeout(() => {
       setIsUserInputActive(false);
@@ -889,6 +892,22 @@ function App() {
         return [newResponse, ...filtered];
       });
       
+      // Reset the 30-second timeout after AI responds
+      if (isUserInputActive) {
+        console.log('AI responded during user conversation, resetting 30-second timeout');
+        
+        // Clear existing timeout
+        if (userInputTimeoutRef.current) {
+          clearTimeout(userInputTimeoutRef.current);
+        }
+        
+        // Set new 30-second timeout
+        userInputTimeoutRef.current = setTimeout(() => {
+          setIsUserInputActive(false);
+          console.log('User input timeout expired after AI response, resuming coordinate sending');
+        }, 30000);
+      }
+      
       console.log('User conversation response received');
     } catch (error) {
       console.error('Error sending user message to AI:', error);
@@ -904,6 +923,20 @@ function App() {
         };
         return [errorResponse, ...filtered];
       });
+      
+      // Also reset timeout on error to allow retry
+      if (isUserInputActive) {
+        console.log('Error occurred during user conversation, resetting 30-second timeout');
+        
+        if (userInputTimeoutRef.current) {
+          clearTimeout(userInputTimeoutRef.current);
+        }
+        
+        userInputTimeoutRef.current = setTimeout(() => {
+          setIsUserInputActive(false);
+          console.log('User input timeout expired after error, resuming coordinate sending');
+        }, 30000);
+      }
     }
   };
 
@@ -1245,6 +1278,38 @@ function App() {
         <div className="ai-section">
           <h3>LangFlow AI Responses</h3>
           
+          {/* User Input Form - Always at the top */}
+          <div className="user-input-section">
+            <form onSubmit={handleUserInputSubmit} className="user-input-form">
+              <div className="input-group">
+                <div className="user-input-container">
+                  <input
+                    id="userMessage"
+                    type="text"
+                    value={userMessage}
+                    onChange={(e) => setUserMessage(e.target.value)}
+                    placeholder="Ask the AI anything about your surroundings..."
+                    className="user-message-input"
+                    disabled={walkingState === 'stopped'}
+                  />
+                  <button
+                    type="submit"
+                    className="send-message-btn"
+                    disabled={!userMessage.trim() || walkingState === 'stopped'}
+                  >
+                    Send
+                  </button>
+                </div>
+                {isUserInputActive && (
+                  <div className="user-input-status">
+                    <span className="status-indicator active">User conversation active</span>
+                    <span className="status-note">Coordinate updates paused for 30 seconds</span>
+                  </div>
+                )}
+              </div>
+            </form>
+          </div>
+          
           <div className="ai-responses">
             {aiResponses.length === 0 ? (
               <p className="no-responses">No AI responses yet. Start walking to see responses from LangFlow, or send a message below.</p>
@@ -1252,32 +1317,29 @@ function App() {
               <div className="responses-container">
                 {aiResponses.map((response, index) => (
                   <div key={`${response.timestamp}-${index}`} className={`ai-response ${response.type}`}>
-                    <div className="response-header">
-                      <div className="response-type-indicator">
-                        {response.type === 'narrative' ? (
-                          <>
-                            <span className="type-icon narrative">📍</span>
-                            <span className="type-label">Surrounding Narrative</span>
-                          </>
-                        ) : response.type === 'conversation' ? (
-                          <>
-                            <span className="type-icon conversation">💬</span>
-                            <span className="type-label">Conversation</span>
-                          </>
-                        ) : response.type === 'user-input' ? (
-                          <>
-                            <span className="type-icon user-input">👤</span>
-                            <span className="type-label">You</span>
-                          </>
-                        ) : (
-                          <>
-                            <span className="type-icon loading">⏳</span>
-                            <span className="type-label">AI Thinking</span>
-                          </>
-                        )}
+                    {response.type !== 'user-input' && (
+                      <div className="response-header">
+                        <div className="response-type-indicator">
+                          {response.type === 'narrative' ? (
+                            <>
+                              <span className="type-icon narrative">📍</span>
+                              <span className="type-label">Surrounding Narrative</span>
+                            </>
+                          ) : response.type === 'conversation' ? (
+                            <>
+                              <span className="type-icon conversation">💬</span>
+                              <span className="type-label">Conversation</span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="type-icon loading">⏳</span>
+                              <span className="type-label">AI Thinking</span>
+                            </>
+                          )}
+                        </div>
+                        <span className="timestamp">{response.timestamp}</span>
                       </div>
-                      <span className="timestamp">{response.timestamp}</span>
-                    </div>
+                    )}
                     <div className="response-message">
                       {response.type === 'conversation' ? (
                         <div className="conversation-content">
@@ -1314,38 +1376,6 @@ function App() {
                 ))}
               </div>
             )}
-            
-            {/* User Input Form - Now integrated into responses section */}
-            <div className="user-input-section">
-              <form onSubmit={handleUserInputSubmit} className="user-input-form">
-                <div className="input-group">
-                  <div className="user-input-container">
-                    <input
-                      id="userMessage"
-                      type="text"
-                      value={userMessage}
-                      onChange={(e) => setUserMessage(e.target.value)}
-                      placeholder="Ask the AI anything about your surroundings..."
-                      className="user-message-input"
-                      disabled={walkingState === 'stopped'}
-                    />
-                    <button
-                      type="submit"
-                      className="send-message-btn"
-                      disabled={!userMessage.trim() || walkingState === 'stopped'}
-                    >
-                      Send
-                    </button>
-          </div>
-                  {isUserInputActive && (
-                    <div className="user-input-status">
-                      <span className="status-indicator active">User conversation active</span>
-                      <span className="status-note">Coordinate updates paused for 30 seconds</span>
-        </div>
-                  )}
-                </div>
-              </form>
-            </div>
           </div>
         </div>
       </div>
