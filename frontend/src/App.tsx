@@ -855,7 +855,7 @@ function App() {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/mp3' });
         // Stop the media stream tracks
         stream.getTracks().forEach(track => track.stop());
-        transcribeAudio(audioBlob);
+        await transcribeAudio(audioBlob);
       };
       mediaRecorderRef.current.start();
       console.log('Recording started');
@@ -915,17 +915,8 @@ function App() {
       setAiResponses(prev => prev.filter(r => r.type !== 'loading'));
       
       if (transcribedText && transcribedText.trim()) {
-        setUserMessage(transcribedText);
-        
-        const successResponse: AIResponse = {
-            timestamp: new Date().toLocaleTimeString(),
-            message: `Transcribed: "${transcribedText}"`,
-            type: 'conversation',
-        };
-        setAiResponses(prev => [successResponse, ...prev]);
-        
-        setIsUserInputActive(false);
-        isUserInputActiveRef.current = false;
+        // Directly submit the transcribed text to the AI
+        await submitMessage(transcribedText);
       } else {
         const errorResponse: AIResponse = {
             timestamp: new Date().toLocaleTimeString(),
@@ -1006,11 +997,8 @@ function App() {
     setIsMapSelectionMode(false);
   };
 
-  // Handle user input submission
-  const handleUserInputSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!userMessage.trim()) return;
-
+  // Centralized function to handle submitting any user message to the AI
+  const submitMessage = async (message: string) => {
     // Stop any existing countdown IMMEDIATELY.
     if (countdownIntervalRef.current) {
       clearInterval(countdownIntervalRef.current);
@@ -1019,18 +1007,16 @@ function App() {
     setCountdown(null);
 
     // Activate user input mode and pause coordinate sending
-    console.log(`[SUBMIT] User input mode ref BEFORE: ${isUserInputActiveRef.current}`);
+    console.log(`[SUBMIT] User input mode activated.`);
     setIsUserInputActive(true);
-    isUserInputActiveRef.current = true; // Set ref immediately
-    console.log(`[SUBMIT] User input mode ref AFTER: ${isUserInputActiveRef.current}`);
-    console.log('User input mode activated, pausing coordinate sending');
+    isUserInputActiveRef.current = true;
 
     // Immediately show user's message in conversation area
     const userInputResponse: AIResponse = {
       timestamp: new Date().toLocaleTimeString(),
-      message: userMessage,
+      message: message,
       type: 'user-input',
-      userMessage: userMessage
+      userMessage: message,
     };
     setAiResponses(prev => [userInputResponse, ...prev]);
 
@@ -1038,18 +1024,22 @@ function App() {
     const loadingResponse: AIResponse = {
       timestamp: new Date().toLocaleTimeString(),
       message: 'AI is thinking...',
-      type: 'loading'
+      type: 'loading',
     };
     setAiResponses(prev => [loadingResponse, ...prev]);
 
-    // Store the user message for the AI call
-    const messageToSend = userMessage;
-    
-    // Clear the input immediately
-    setUserMessage('');
-
     // Send user message to AI
-    await sendUserMessageToAI(messageToSend);
+    await sendUserMessageToAI(message);
+  };
+
+  // Handle user input submission from the form
+  const handleUserInputSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const messageToSend = userMessage;
+    if (!messageToSend.trim()) return;
+
+    setUserMessage(''); // Clear the input immediately
+    await submitMessage(messageToSend);
   };
 
   // Send user message to AI
