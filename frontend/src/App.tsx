@@ -108,6 +108,8 @@ function App() {
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const [playingResponseId, setPlayingResponseId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Update ref when state changes
   useEffect(() => {
@@ -1138,6 +1140,73 @@ function App() {
     }
   };
 
+  const handlePlayAudio = async (text: string, responseId: string) => {
+    if (playingResponseId) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      setPlayingResponseId(null);
+      return;
+    }
+
+    if (!elevenLabsApiKey || !elevenLabsApiKey.trim()) {
+      console.error('ElevenLabs API key is not configured. Please set `VITE_ELEVENLABS_API_KEY` in your .env file.');
+      const errorResponse: AIResponse = {
+        timestamp: new Date().toLocaleTimeString(),
+        message: 'ElevenLabs API key is not configured. Please set `VITE_ELEVENLABS_API_KEY` in your .env file.',
+        type: 'conversation',
+      };
+      setAiResponses(prev => [errorResponse, ...prev]);
+      return;
+    }
+
+    setPlayingResponseId(responseId);
+
+    try {
+      const elevenlabs = new ElevenLabsClient({ apiKey: elevenLabsApiKey });
+      const audioStream = await elevenlabs.textToSpeech.convert('JBFqnCBsd6RMkjVDRZzb', {
+        text: text,
+        modelId: 'eleven_multilingual_v2',
+      });
+      
+      const reader = audioStream.getReader();
+      const chunks: Uint8Array[] = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      const audioBlob = new Blob(chunks, { type: 'audio/mpeg' });
+      const audioUrl = URL.createObjectURL(audioBlob);
+      
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+      audio.play();
+
+      audio.onended = () => {
+        setPlayingResponseId(null);
+        URL.revokeObjectURL(audioUrl);
+      };
+      
+      audio.onerror = () => {
+        console.error('Error playing audio element.');
+        setPlayingResponseId(null);
+        URL.revokeObjectURL(audioUrl);
+      }
+
+    } catch (error) {
+      console.error('Error fetching or playing audio:', error);
+      const errorResponse: AIResponse = {
+        timestamp: new Date().toLocaleTimeString(),
+        message: `Failed to play audio: ${error instanceof Error ? error.message : String(error)}`,
+        type: 'conversation',
+      };
+      setAiResponses(prev => [errorResponse, ...prev]);
+      setPlayingResponseId(null);
+    }
+  };
+
   return (
     <div className="App">
       <header className="App-header">
@@ -1526,7 +1595,7 @@ function App() {
             ) : (
               <div className="responses-container">
                 {aiResponses.map((response, index) => (
-                  <div key={`${response.timestamp}-${index}`} className={`ai-response ${response.type}`}>
+                  <div key={`${response.timestamp}-${index}`} className={`ai-response ${response.type} ${playingResponseId === response.timestamp ? 'playing' : ''}`}>
                     {response.type !== 'user-input' && (
                       <div className="response-header">
                         <div className="response-type-indicator">
@@ -1547,7 +1616,21 @@ function App() {
                             </>
                           )}
                         </div>
-                        <span className="timestamp">{response.timestamp}</span>
+                        <div className="response-actions">
+                          <button
+                            className="play-audio-btn"
+                            onClick={() => handlePlayAudio(response.message, response.timestamp)}
+                            disabled={playingResponseId !== null && playingResponseId !== response.timestamp}
+                            title={playingResponseId === response.timestamp ? "Stop" : "Play audio"}
+                          >
+                            {playingResponseId === response.timestamp ? (
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+                            ) : (
+                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                            )}
+                          </button>
+                          <span className="timestamp">{response.timestamp}</span>
+                        </div>
                       </div>
                     )}
                     <div className="response-message">

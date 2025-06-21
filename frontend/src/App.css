@@ -1511,3 +1511,42 @@
         box-shadow: 0 0 0 0 rgba(244, 67, 54, 0);
     }
 }
+
+.response-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.play-audio-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    margin: 0;
+    color: #6c757d;
+    display: flex;
+    align-items: center;
+}
+
+.play-audio-btn:hover:not(:disabled) {
+    color: #667eea;
+}
+
+.play-audio-btn:disabled {
+    cursor: not-allowed;
+    color: #adb5bd;
+}
+
+.ai-response.playing {
+    background-color: #f0f2ff;
+    border-left: 4px solid #667eea;
+    transition: background-color 0.3s ease, border-left 0.3s ease;
+}
+
+.response-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
