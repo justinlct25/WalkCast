@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import './App.css';
+import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
 
 // Fix for default markers in react-leaflet
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl;
@@ -103,7 +104,7 @@ function App() {
   const [nextAiCallTime, setNextAiCallTime] = useState<number>(0);
   const [countdown, setCountdown] = useState<number | null>(null);
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const [elevenLabsApiKey] = useState('sk_348ed11f08d12c82d0503bfd0d977710ee8e7aa3cbc537d7');
+  const elevenLabsApiKey = import.meta.env.VITE_ELEVENLABS_API_KEY || '';
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -382,14 +383,10 @@ function App() {
         walkingContext = 'START of route';
         console.log('AI Context: START of route');
       } else if (progressPercentage >= 95) { // Within last 5% of route
-        console.log('AI Context: START of route');
-      } else if (progressPercentage >= 95) { // Within last 5% of route
         walkingContext = 'END of route';
-        console.log('AI Context: END of route');
         console.log('AI Context: END of route');
       } else {
         walkingContext = 'WALKING along route';
-        console.log('AI Context: WALKING along route');
         console.log('AI Context: WALKING along route');
         
         // Calculate direction and turning information
@@ -821,10 +818,17 @@ function App() {
   };
 
   const handleStartRecording = async () => {
-    if (!elevenLabsApiKey.trim()) {
-      console.error('ElevenLabs API key is missing.');
+    if (!elevenLabsApiKey || !elevenLabsApiKey.trim()) {
+      console.error('ElevenLabs API key is missing. Please set it in your .env file.');
+      const errorResponse: AIResponse = {
+        timestamp: new Date().toLocaleTimeString(),
+        message: 'ElevenLabs API key is not configured. Please set `VITE_ELEVENLABS_API_KEY` in your .env file and restart the server.',
+        type: 'conversation',
+      };
+      setAiResponses(prev => [errorResponse, ...prev]);
       return;
     }
+    console.log(`Using ElevenLabs API Key (first 5 chars): ${elevenLabsApiKey.substring(0, 5)}...`);
     if (isRecording) return;
 
     // Immediately stop narratives
@@ -871,6 +875,14 @@ function App() {
     }
   };
 
+  const handleMicButtonClick = () => {
+    if (isRecording) {
+      handleStopRecording();
+    } else {
+      handleStartRecording();
+    }
+  };
+
   const transcribeAudio = async (audioBlob: Blob) => {
     if (audioBlob.size === 0) {
         console.warn('Audio blob is empty, not sending for transcription.');
@@ -878,7 +890,7 @@ function App() {
         isUserInputActiveRef.current = false;
         return;
     }
-    console.log('Transcribing audio...');
+    console.log('Transcribing audio with ElevenLabs SDK...');
 
     const loadingResponse: AIResponse = {
       timestamp: new Date().toLocaleTimeString(),
@@ -887,56 +899,50 @@ function App() {
     };
     setAiResponses(prev => [loadingResponse, ...prev]);
 
-    const formData = new FormData();
-    formData.append('file', audioBlob, 'audio.mp3');
-
     try {
-      const response = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
-        method: 'POST',
-        headers: {
-          'xi-api-key': elevenLabsApiKey,
-        },
-        body: formData,
+      const elevenlabs = new ElevenLabsClient({
+        apiKey: elevenLabsApiKey,
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`ElevenLabs API error: ${response.statusText} - ${errorText}`);
-      }
+      const transcription = await elevenlabs.speechToText.convert({
+        file: audioBlob,
+        modelId: "scribe_v1",
+      });
 
-      const data = await response.json();
-      const transcribedText = data.text;
+      const transcribedText = transcription.text;
       console.log('Transcription result:', transcribedText);
 
       setAiResponses(prev => prev.filter(r => r.type !== 'loading'));
       
       if (transcribedText && transcribedText.trim()) {
-        const userInputResponse: AIResponse = {
-            timestamp: new Date().toLocaleTimeString(),
-            message: transcribedText,
-            type: 'user-input',
-            userMessage: transcribedText,
-        };
-        setAiResponses(prev => [userInputResponse, ...prev]);
+        setUserMessage(transcribedText);
         
-        const aiLoadingResponse: AIResponse = {
+        const successResponse: AIResponse = {
             timestamp: new Date().toLocaleTimeString(),
-            message: 'AI is thinking...',
-            type: 'loading',
+            message: `Transcribed: "${transcribedText}"`,
+            type: 'conversation',
         };
-        setAiResponses(prev => [aiLoadingResponse, ...prev]);
-
-        await sendUserMessageToAI(transcribedText);
+        setAiResponses(prev => [successResponse, ...prev]);
+        
+        setIsUserInputActive(false);
+        isUserInputActiveRef.current = false;
       } else {
+        const errorResponse: AIResponse = {
+            timestamp: new Date().toLocaleTimeString(),
+            message: 'No speech detected. Please try again.',
+            type: 'conversation',
+        };
+        setAiResponses(prev => [errorResponse, ...prev]);
         setIsUserInputActive(false);
         isUserInputActiveRef.current = false;
       }
     } catch (error) {
       console.error('Error transcribing audio:', error);
       setAiResponses(prev => prev.filter(r => r.type !== 'loading'));
+      const errorMessage = error instanceof Error ? error.message : String(error);
       const errorResponse: AIResponse = {
         timestamp: new Date().toLocaleTimeString(),
-        message: 'Failed to transcribe audio.',
+        message: `Failed to transcribe audio: ${errorMessage}`,
         type: 'conversation',
       };
       setAiResponses(prev => [errorResponse, ...prev]);
@@ -1503,10 +1509,8 @@ function App() {
                   </button>
                   <button
                     type="button"
-                    onMouseDown={handleStartRecording}
-                    onMouseUp={handleStopRecording}
+                    onClick={handleMicButtonClick}
                     className={`mic-btn ${isRecording ? 'recording' : ''}`}
-                    disabled={walkingState === 'stopped'}
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
                   </button>
