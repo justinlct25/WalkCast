@@ -38,6 +38,8 @@ const startIcon = createCustomIcon('#4CAF50');
 const endIcon = createCustomIcon('#F44336');
 const currentIcon = createCustomIcon('#2196F3');
 
+const AI_REQUEST_INTERVAL = 12000; // 12 seconds in milliseconds
+
 // Component to handle map clicks
 function MapClickHandler({ 
   onMapClick, 
@@ -583,7 +585,7 @@ function App() {
     }
   };
 
-  // Check if we should send AI request (every 20 seconds)
+  // Check if we should send AI request (every 12 seconds)
   const checkAndSendAiRequest = (currentCoord?: Coordinate, currentIndex?: number) => {
     // Don't send coordinate updates if user input mode is active
     if (isUserInputActiveRef.current) {
@@ -599,17 +601,17 @@ function App() {
     
     console.log(`AI check - Time since last call: ${timeSinceLastAiCall}ms, Current coordinate:`, coordToUse);
     
-    if (timeSinceLastAiCall >= 20000 && coordToUse) { // 20 seconds
-      console.log('Sending AI request - 20 seconds have passed');
+    if (timeSinceLastAiCall >= AI_REQUEST_INTERVAL && coordToUse) { // 12 seconds
+      console.log(`Sending AI request - ${AI_REQUEST_INTERVAL / 1000} seconds have passed`);
       sendCoordinateToAI(coordToUse, currentIndex);
       lastAiCallTimeRef.current = currentTime;
-      setNextAiCallTime(currentTime + 20000); // Set next AI call time
-    } else if (timeSinceLastAiCall >= 20000 && !coordToUse) {
-      console.log('20 seconds passed but no current coordinate available');
+      setNextAiCallTime(currentTime + AI_REQUEST_INTERVAL); // Set next AI call time
+    } else if (timeSinceLastAiCall >= AI_REQUEST_INTERVAL && !coordToUse) {
+      console.log(`${AI_REQUEST_INTERVAL / 1000} seconds passed but no current coordinate available`);
     } else {
-      const remainingTime = 20000 - timeSinceLastAiCall;
+      const remainingTime = AI_REQUEST_INTERVAL - timeSinceLastAiCall;
       console.log(`Waiting for AI request - ${remainingTime}ms remaining`);
-      setNextAiCallTime(lastAiCallTimeRef.current + 20000);
+      setNextAiCallTime(lastAiCallTimeRef.current + AI_REQUEST_INTERVAL);
     }
   };
 
@@ -643,7 +645,7 @@ function App() {
     setAiResponses([]);
     lastAiCallTimeRef.current = Date.now();
     totalDistanceTraveledRef.current = 0; // Reset total distance traveled
-    setNextAiCallTime(Date.now() + 20000); // Set initial next AI call time
+    setNextAiCallTime(Date.now() + AI_REQUEST_INTERVAL); // Set initial next AI call time
 
     // Send first coordinate immediately with START context
     console.log('Sending first AI call with START context');
@@ -775,8 +777,8 @@ function App() {
       countdownIntervalRef.current = null;
     }
     
-    console.log('[COUNTDOWN] Starting 30s countdown.');
-    setCountdown(30);
+    console.log('[COUNTDOWN] Starting 25s countdown.');
+    setCountdown(25);
   
     const intervalId = setInterval(() => {
       // We use setCountdown's functional update to avoid stale `countdown` values.
@@ -973,9 +975,9 @@ function App() {
         return [newResponse, ...filtered];
       });
       
-      // Reset the 30-second timeout after AI responds
+      // Reset the 25-second timeout after AI responds
       if (isUserInputActiveRef.current) {
-        console.log('AI responded during user conversation, starting 30-second countdown.');
+        console.log('AI responded during user conversation, starting 25-second countdown.');
         startCountdown();
       }
       
@@ -997,7 +999,7 @@ function App() {
       
       // Also reset timeout on error to allow retry
       if (isUserInputActiveRef.current) {
-        console.log('Error occurred during user conversation, starting 30-second countdown.');
+        console.log('Error occurred during user conversation, starting 25-second countdown.');
         startCountdown();
       }
     }
@@ -1174,7 +1176,7 @@ function App() {
                   </div>
                   <div className="status-item">
                     <span className="status-label">AI Updates:</span>
-                    <span className="status-value">Every 20 seconds</span>
+                    <span className="status-value">Every {AI_REQUEST_INTERVAL / 1000} seconds</span>
                   </div>
                   {walkingState === 'walking' && nextAiCallTime > 0 && (
                     <div className="status-item">
