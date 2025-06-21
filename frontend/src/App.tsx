@@ -328,6 +328,12 @@ function App() {
 
   // Send coordinate to AI with LangFlow API
   const sendCoordinateToAI = async (coord: Coordinate, currentIndex?: number) => {
+    // Final safety check to prevent narratives during conversation
+    if (isUserInputActiveRef.current) {
+      console.warn('[sendCoordinateToAI] Blocked narrative request because user input is active.');
+      return;
+    }
+
     // Prevent duplicate API calls
     if (isApiCallInProgressRef.current) {
       console.log('API call already in progress, skipping...');
@@ -460,20 +466,33 @@ function App() {
       console.log('LangFlow response:', data);
 
       let aiMessage = 'No response from AI';
+      let aiResponseType: AIResponse['type'] = 'narrative';
 
       if (data.outputs && data.outputs.length > 0) {
         const output = data.outputs[0];
         
         if (output.outputs && output.outputs.length > 0) {
           const result = output.outputs[0];
-          aiMessage = result.results.message.text;
+          const rawMessage = result.results?.message?.text;
+
+          if (rawMessage) {
+            try {
+              const parsedResponse = JSON.parse(rawMessage);
+              aiMessage = parsedResponse.text || 'Could not parse text from AI response.';
+              aiResponseType = parsedResponse.response_type === 'conversation' ? 'conversation' : 'narrative';
+            } catch(e) {
+              console.warn("Could not parse AI response as JSON, treating as plain text.", e);
+              aiMessage = rawMessage;
+              aiResponseType = 'narrative'; // Fallback for this function
+            }
+          }
         }
       }
 
       const newResponse: AIResponse = {
         timestamp: new Date().toLocaleTimeString(),
         message: aiMessage,
-        type: 'narrative'
+        type: aiResponseType
       };
       
       // Check if this is a duplicate of the last response
@@ -746,22 +765,41 @@ function App() {
 
   // Countdown logic
   const startCountdown = () => {
+    // Clear any previous interval before starting a new one.
     if (countdownIntervalRef.current) {
       clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
     }
+    
+    console.log('[COUNTDOWN] Starting 30s countdown.');
     setCountdown(30);
-    countdownIntervalRef.current = setInterval(() => {
-      setCountdown(prev => {
-        if (prev === null || prev <= 1) {
-          clearInterval(countdownIntervalRef.current!);
-          countdownIntervalRef.current = null;
+  
+    const intervalId = setInterval(() => {
+      // We use setCountdown's functional update to avoid stale `countdown` values.
+      setCountdown(currentCountdown => {
+        if (currentCountdown === null || currentCountdown <= 1) {
+          // Countdown finished.
+          clearInterval(intervalId); // Clear this specific interval using its ID from closure.
+  
+          // It's possible another interval was started, so we only nullify the ref if it's us.
+          if (countdownIntervalRef.current === intervalId) {
+            countdownIntervalRef.current = null;
+          }
+          
+          console.log('[COUNTDOWN] Finishing. Setting state and ref to false.');
           setIsUserInputActive(false);
+          isUserInputActiveRef.current = false;
+          
           console.log('Countdown finished, resuming coordinate sending.');
-          return null;
+          return null; // This will set the countdown state to null.
         }
-        return prev - 1;
+        // Decrement the countdown.
+        return currentCountdown - 1;
       });
     }, 1000);
+  
+    // Store the new interval ID in the ref.
+    countdownIntervalRef.current = intervalId;
   };
 
   // Handle map click for point selection
@@ -824,15 +862,19 @@ function App() {
     e.preventDefault();
     if (!userMessage.trim()) return;
 
-    // Activate user input mode and pause coordinate sending
-    setIsUserInputActive(true);
-    console.log('User input mode activated, pausing coordinate sending');
-
-    // Clear any existing timeout
-    if (userInputTimeoutRef.current) {
-      clearTimeout(userInputTimeoutRef.current);
+    // Stop any existing countdown IMMEDIATELY.
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
     }
     setCountdown(null);
+
+    // Activate user input mode and pause coordinate sending
+    console.log(`[SUBMIT] User input mode ref BEFORE: ${isUserInputActiveRef.current}`);
+    setIsUserInputActive(true);
+    isUserInputActiveRef.current = true; // Set ref immediately
+    console.log(`[SUBMIT] User input mode ref AFTER: ${isUserInputActiveRef.current}`);
+    console.log('User input mode activated, pausing coordinate sending');
 
     // Immediately show user's message in conversation area
     const userInputResponse: AIResponse = {
@@ -891,20 +933,33 @@ function App() {
       console.log('AI response to user message:', data);
 
       let aiMessage = 'No response from AI';
+      let aiResponseType: AIResponse['type'] = 'conversation';
 
       if (data.outputs && data.outputs.length > 0) {
         const output = data.outputs[0];
         
         if (output.outputs && output.outputs.length > 0) {
           const result = output.outputs[0];
-          aiMessage = result.results.message.text;
+          const rawMessage = result.results?.message?.text;
+
+          if (rawMessage) {
+            try {
+              const parsedResponse = JSON.parse(rawMessage);
+              aiMessage = parsedResponse.text || 'Could not parse text from AI response.';
+              aiResponseType = parsedResponse.response_type === 'conversation' ? 'conversation' : 'narrative';
+            } catch (e) {
+              console.warn("Could not parse AI response as JSON, treating as plain text.", e);
+              aiMessage = rawMessage;
+              aiResponseType = 'conversation'; // Fallback for this function
+            }
+          }
         }
       }
 
       const newResponse: AIResponse = {
         timestamp: new Date().toLocaleTimeString(),
         message: aiMessage,
-        type: 'conversation',
+        type: aiResponseType,
         userMessage: message
       };
       
@@ -915,7 +970,7 @@ function App() {
       });
       
       // Reset the 30-second timeout after AI responds
-      if (isUserInputActive) {
+      if (isUserInputActiveRef.current) {
         console.log('AI responded during user conversation, starting 30-second countdown.');
         startCountdown();
       }
@@ -937,7 +992,7 @@ function App() {
       });
       
       // Also reset timeout on error to allow retry
-      if (isUserInputActive) {
+      if (isUserInputActiveRef.current) {
         console.log('Error occurred during user conversation, starting 30-second countdown.');
         startCountdown();
       }
